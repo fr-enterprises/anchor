@@ -8,6 +8,8 @@ local proxy that caches your AI API calls and tracks spend.
 [![license](https://img.shields.io/github/license/f4rkh4d/anchor?style=flat-square&color=000)](LICENSE)
 [![downloads](https://img.shields.io/github/downloads/f4rkh4d/anchor/total?style=flat-square&color=000)](https://github.com/f4rkh4d/anchor/releases)
 
+<img src=".github/assets/demo.gif" alt="anchor caches API calls and tracks spend" width="780">
+
 </div>
 
 ```sh
