@@ -2,7 +2,7 @@
 # anchor installer. Picks the right binary, drops it in /usr/local/bin.
 set -euo pipefail
 
-REPO="f4rkh4d/anchor"
+REPO="fr-enterprises/anchor"
 BIN="anchor"
 
 OS="$(uname -s)"
