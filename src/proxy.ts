@@ -13,9 +13,18 @@
 import { keyOf, store, tryHit, cacheStats } from "./cache";
 import { recordEvent } from "./spend";
 import { costUsd, type Tokens } from "./pricing";
+import { OpenAIEmbeddingBackend, type EmbeddingBackend } from "./embeddings";
+import { storeEmbedding } from "./embedding_store";
+import { inputTextFor } from "./cache_serialize";
 
 const ANTHROPIC_UPSTREAM = process.env.ANTHROPIC_UPSTREAM || "https://api.anthropic.com";
 const OPENAI_UPSTREAM = process.env.OPENAI_UPSTREAM || "https://api.openai.com";
+
+// Semantic indexing toggle. When enabled, every cache MISS computes an
+// embedding of the request's input text and stores it for later fuzzy
+// lookup. Off by default in v0.2.0 so behaviour matches v0.1; flip to
+// ANCHOR_SEMANTIC=1 to opt in. The lookup path is added in a follow-up PR.
+const SEMANTIC_ENABLED = process.env.ANCHOR_SEMANTIC === "1";
 
 function detectProvider(url: URL): "anthropic" | "openai" | null {
   if (url.pathname.startsWith("/v1/messages")) return "anthropic";
@@ -81,6 +90,32 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
   const log = (...args: any[]) => {
     if (opts.verbose) console.log("[anchor]", ...args);
   };
+
+  // Lazily initialise an embedding backend if semantic indexing is enabled.
+  // We skip initialisation entirely when SEMANTIC_ENABLED is false so users
+  // who do not want any embedding-related side effects pay zero overhead.
+  let embeddings: EmbeddingBackend | null = null;
+  if (SEMANTIC_ENABLED) {
+    const openai = new OpenAIEmbeddingBackend();
+    if (openai.available()) {
+      embeddings = openai;
+      log("semantic indexing ON, backend=" + openai.id);
+    } else {
+      log("ANCHOR_SEMANTIC=1 set but OPENAI_API_KEY missing; semantic indexing disabled");
+    }
+  }
+
+  async function indexMiss(cacheKey: string, body: any): Promise<void> {
+    if (!embeddings) return;
+    const text = inputTextFor(body);
+    if (!text) return;
+    try {
+      const vector = await embeddings.embed(text);
+      storeEmbedding({ cacheKey, backendId: embeddings.id, text, vector });
+    } catch (e) {
+      log("embedding failed", (e as Error).message);
+    }
+  }
 
   const server = Bun.serve({
     port: opts.port,
@@ -176,6 +211,11 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
           status: upstreamResp.status,
           missCost,
         });
+
+        // If semantic indexing is enabled, embed the input text and store
+        // it alongside the cache entry. We do this fire-and-forget so the
+        // user-facing response is not delayed by the embedding round-trip.
+        indexMiss(k, body);
       } else {
         log("ERR ", provider, model, source, upstreamResp.status);
       }
