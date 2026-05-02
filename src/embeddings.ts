@@ -30,6 +30,64 @@ export class NoOpBackend implements EmbeddingBackend {
   }
 }
 
+// OpenAIEmbeddingBackend uses OpenAI's text-embedding-3-small model. Cheap
+// (about $0.02 per million tokens) and high-quality. Requires OPENAI_API_KEY.
+//
+// For users who do not want any cloud call for embeddings (the privacy-first
+// crowd), a future LocalFastEmbedBackend will run an ONNX model in-process
+// and pull no network. That comes in a follow-up PR; this is the first
+// concrete backend so the rest of the cache code can be written.
+export class OpenAIEmbeddingBackend implements EmbeddingBackend {
+  id = "openai-text-embedding-3-small";
+  dim = 1536;
+  private readonly apiKey: string;
+  private readonly endpoint: string;
+
+  constructor(opts?: { apiKey?: string; endpoint?: string }) {
+    this.apiKey = opts?.apiKey || process.env.OPENAI_API_KEY || "";
+    this.endpoint =
+      opts?.endpoint ||
+      process.env.OPENAI_EMBEDDINGS_URL ||
+      "https://api.openai.com/v1/embeddings";
+  }
+
+  available(): boolean {
+    return this.apiKey.length > 0;
+  }
+
+  async embed(text: string): Promise<Float32Array> {
+    if (!this.apiKey) throw new Error("OPENAI_API_KEY required for OpenAIEmbeddingBackend");
+    const resp = await fetch(this.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "text-embedding-3-small",
+        input: text,
+        encoding_format: "float",
+      }),
+    });
+    if (!resp.ok) {
+      throw new Error(`OpenAI embeddings ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+    }
+    const data = (await resp.json()) as { data: Array<{ embedding: number[] }> };
+    const v = data.data?.[0]?.embedding;
+    if (!v || !Array.isArray(v)) throw new Error("OpenAI embeddings: unexpected response shape");
+    // Normalize to unit length so cosine reduces to dot product.
+    const arr = new Float32Array(v.length);
+    let n = 0;
+    for (let i = 0; i < v.length; i++) {
+      arr[i] = v[i]!;
+      n += arr[i]! * arr[i]!;
+    }
+    const norm = Math.sqrt(n);
+    if (norm > 0) for (let i = 0; i < arr.length; i++) arr[i]! /= norm;
+    return arr;
+  }
+}
+
 let active: EmbeddingBackend = new NoOpBackend();
 
 export function getBackend(): EmbeddingBackend {
