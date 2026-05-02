@@ -55,6 +55,19 @@ const SCHEMA = [
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   )`,
+
+  // v0.2: semantic-fuzzy cache index. Holds the input text used to derive
+  // each cache entry and a pointer into the embeddings store. The actual
+  // float32 vector sits in a sibling BLOB so SQLite query planning stays
+  // sane on the cache table.
+  `CREATE TABLE IF NOT EXISTS cache_embeddings (
+    cache_key   TEXT PRIMARY KEY REFERENCES cache(key) ON DELETE CASCADE,
+    backend_id  TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    vector      BLOB NOT NULL,
+    saved_at    INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS cache_embeddings_backend ON cache_embeddings(backend_id)",
 ];
 
 for (const sql of SCHEMA) {
