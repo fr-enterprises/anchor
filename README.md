@@ -4,9 +4,9 @@
 
 local proxy that caches your AI API calls and tracks spend.
 
-[![release](https://img.shields.io/github/v/release/f4rkh4d/anchor?style=flat-square&color=000)](https://github.com/f4rkh4d/anchor/releases)
-[![license](https://img.shields.io/github/license/f4rkh4d/anchor?style=flat-square&color=000)](LICENSE)
-[![downloads](https://img.shields.io/github/downloads/f4rkh4d/anchor/total?style=flat-square&color=000)](https://github.com/f4rkh4d/anchor/releases)
+[![release](https://img.shields.io/github/v/release/fr-enterprises/anchor?style=flat-square&color=000)](https://github.com/fr-enterprises/anchor/releases)
+[![license](https://img.shields.io/github/license/fr-enterprises/anchor?style=flat-square&color=000)](LICENSE)
+[![downloads](https://img.shields.io/github/downloads/fr-enterprises/anchor/total?style=flat-square&color=000)](https://github.com/fr-enterprises/anchor/releases)
 
 <img src=".github/assets/demo.gif" alt="anchor caches API calls and tracks spend" width="780">
 
@@ -45,10 +45,10 @@ cache hits cost nothing. misses are forwarded as-is, response stored, future ide
 ## install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/f4rkh4d/anchor/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fr-enterprises/anchor/main/install.sh | bash
 ```
 
-or grab a binary from [Releases](https://github.com/f4rkh4d/anchor/releases). single static binary, no node, no python, no docker.
+or grab a binary from [Releases](https://github.com/fr-enterprises/anchor/releases). single static binary, no node, no python, no docker.
 
 ## use
 
