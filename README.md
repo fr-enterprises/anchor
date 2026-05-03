@@ -111,6 +111,35 @@ export OPENAI_API_KEY=sk-...   # used only for the embedding call
 
 the semantic match only fires across the same provider+model. responses come back with `x-anchor-cache: semantic` and `x-anchor-semantic-score`. tighten with `ANCHOR_SEMANTIC_THRESHOLD=0.97` if you want fewer fuzzy hits, loosen for more savings.
 
+## long-term memory
+
+since v0.4, anchor ships a long-term memory store separate from the request cache. notes persist across sessions and are searched semantically.
+
+from the CLI:
+
+```sh
+anchor remember "rotated the auth keys 2026-05-03" --tag security
+anchor recall "auth rotation"        # semantic search, ranked
+anchor memory list --limit 20
+anchor memory forget 42
+```
+
+from Claude Code or Cursor, anchor exposes the same store as an MCP server over stdio. wire it up once and the model can call `remember` and `recall` mid-conversation.
+
+```sh
+# Claude Code
+claude mcp add anchor anchor mcp
+
+# Cursor — settings.json
+{
+  "mcpServers": {
+    "anchor": { "command": "anchor", "args": ["mcp"] }
+  }
+}
+```
+
+memory uses the same OpenAI embeddings backend as the cache, so one `OPENAI_API_KEY` covers both features. text and vectors live in the same SQLite store at `~/.anchor/anchor.db`. nothing else leaves your machine.
+
 ## privacy
 
 - 100% local. proxy listens on 127.0.0.1 by default.
@@ -127,6 +156,11 @@ the semantic match only fires across the same provider+model. responses come bac
 | `anchor stats [today\|week\|month\|all] [--by-day\|--by-model\|--by-source]` | spend + savings |
 | `anchor cache` | cache size |
 | `anchor cache clear` | wipe cache |
+| `anchor remember "note" [--tag x]` | save a long-term memory note |
+| `anchor recall "query" [--k 5]` | semantic search over memory |
+| `anchor memory list [--limit 20]` | list recent memories |
+| `anchor memory forget <id>` | delete a memory |
+| `anchor mcp` | run as an MCP stdio server (Claude Code, Cursor) |
 | `anchor health` | check if proxy is running |
 | `anchor version` | print version |
 

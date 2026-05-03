@@ -16,6 +16,7 @@ import { cacheStats, clearCache } from "./cache";
 import { summary, totals } from "./spend";
 import { dbPath } from "./db";
 import { remember, recall, listRecent, forget, memoryCount } from "./memory";
+import { runMcp } from "./mcp";
 
 const VERSION = "0.3.0";
 
@@ -236,6 +237,7 @@ ${bold("Usage")}
   anchor recall "query" [--k 5]          semantic search over memory
   anchor memory list [--limit 20]        list recent memories
   anchor memory forget <id>              delete a memory
+  anchor mcp           start an MCP stdio server (Claude Code, Cursor, etc.)
   anchor health        check if the proxy is running
   anchor version
 
@@ -268,6 +270,9 @@ try {
       break;
     case "memory":
       cmdMemory(args);
+      break;
+    case "mcp":
+      await runMcp();
       break;
     case "health":
       await cmdHealth();
