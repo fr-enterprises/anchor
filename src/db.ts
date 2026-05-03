@@ -32,6 +32,10 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS cache_saved_at ON cache(saved_at)",
   // Migration: add miss_cost if upgrading from v0.0.x
   "ALTER TABLE cache ADD COLUMN miss_cost REAL NOT NULL DEFAULT 0",
+  // v0.3: streaming-aware cache. is_stream marks rows where `response` is a
+  // raw SSE byte stream that must be replayed chunk-by-chunk rather than
+  // returned as a single JSON body.
+  "ALTER TABLE cache ADD COLUMN is_stream INTEGER NOT NULL DEFAULT 0",
 
   `CREATE TABLE IF NOT EXISTS spend (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
