@@ -5,6 +5,7 @@
 local proxy that caches your AI API calls and tracks spend.
 
 [![release](https://img.shields.io/github/v/release/fr-enterprises/anchor?style=flat-square&color=000)](https://github.com/fr-enterprises/anchor/releases)
+[![ci](https://img.shields.io/github/actions/workflow/status/fr-enterprises/anchor/ci.yml?branch=main&style=flat-square&color=000&label=ci)](https://github.com/fr-enterprises/anchor/actions/workflows/ci.yml)
 [![license](https://img.shields.io/github/license/fr-enterprises/anchor?style=flat-square&color=000)](LICENSE)
 [![downloads](https://img.shields.io/github/downloads/fr-enterprises/anchor/total?style=flat-square&color=000)](https://github.com/fr-enterprises/anchor/releases)
 
@@ -95,10 +96,11 @@ by day
 requests are cached when:
 
 - request body is JSON (Anthropic /v1/messages or OpenAI /v1/chat/completions)
-- not streaming (`stream: false` or absent)
-- key is the SHA-256 of model + system + messages + max_tokens + temperature + tools + response_format
+- key is the SHA-256 of model + system + messages + max_tokens + temperature + tools + response_format + stream
 
 if any of those changes, key changes, cache misses, upstream is called.
+
+since v0.3, streaming requests are cached too. anchor tees the upstream SSE on miss, stores the raw bytes, and replays them on hit as a normal `text/event-stream`. streaming and non-streaming variants of the same prompt get separate cache entries (replay paths differ). usage is parsed from Anthropic `message_start`/`message_delta` events and from OpenAI's final `usage` chunk when the client opts into `stream_options.include_usage`.
 
 since v0.2, exact-match miss can fall through to a semantic lookup: anchor embeds your prompt, scans previously cached requests, and returns the closest match if cosine similarity is above a threshold (default 0.95). off by default. enable with:
 
@@ -146,10 +148,11 @@ the semantic match only fires across the same provider+model. responses come bac
 | version | what |
 |---|---|
 | v0.1  | exact-match cache, spend tracker |
-| **v0.2** | semantic-fuzzy cache via embeddings (you are here) |
-| v0.3  | streaming-aware cache, smart routing: cheap model for simple prompts, premium for hard |
+| v0.2  | semantic-fuzzy cache via embeddings |
+| **v0.3** | streaming-aware cache (you are here) |
 | v0.4  | MCP server: long-term memory tools for Claude Code / Cursor |
-| v0.5  | anti-compact: smart context window management for long sessions |
+| v0.5  | smart routing: cheap model for simple prompts, premium for hard |
+| v0.6  | anti-compact: smart context window management for long sessions |
 | v1.0  | polished: brew formula, demo, launch |
 
 ## not goals
