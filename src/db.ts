@@ -6,12 +6,15 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+// ANCHOR_DB overrides the default path. Tests pass `:memory:` so they do
+// not touch the user's real cache. Anything else is treated as a file path.
+const OVERRIDE = process.env.ANCHOR_DB;
 const DIR = join(homedir(), ".anchor");
-const DB_PATH = join(DIR, "anchor.db");
+const DB_PATH = OVERRIDE && OVERRIDE !== ":memory:" ? OVERRIDE : join(DIR, "anchor.db");
 
-if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true });
+if (!OVERRIDE && !existsSync(DIR)) mkdirSync(DIR, { recursive: true });
 
-export const db = new Database(DB_PATH);
+export const db = new Database(OVERRIDE === ":memory:" ? ":memory:" : DB_PATH);
 
 const SCHEMA = [
   "PRAGMA journal_mode = WAL",
