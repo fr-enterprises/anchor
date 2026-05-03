@@ -98,7 +98,16 @@ requests are cached when:
 - not streaming (`stream: false` or absent)
 - key is the SHA-256 of model + system + messages + max_tokens + temperature + tools + response_format
 
-if any of those changes, key changes, cache misses, upstream is called. exact match only in v0.1. semantic-fuzzy match arrives in v0.2.
+if any of those changes, key changes, cache misses, upstream is called.
+
+since v0.2, exact-match miss can fall through to a semantic lookup: anchor embeds your prompt, scans previously cached requests, and returns the closest match if cosine similarity is above a threshold (default 0.95). off by default. enable with:
+
+```sh
+export ANCHOR_SEMANTIC=1
+export OPENAI_API_KEY=sk-...   # used only for the embedding call
+```
+
+the semantic match only fires across the same provider+model. responses come back with `x-anchor-cache: semantic` and `x-anchor-semantic-score`. tighten with `ANCHOR_SEMANTIC_THRESHOLD=0.97` if you want fewer fuzzy hits, loosen for more savings.
 
 ## privacy
 
@@ -127,15 +136,18 @@ if any of those changes, key changes, cache misses, upstream is called. exact ma
 | `OPENAI_UPSTREAM` | upstream URL for OpenAI, default `https://api.openai.com` |
 | `ANCHOR_PORT` | proxy port, default `7777` |
 | `ANCHOR_HOST` | proxy host, default `127.0.0.1` |
+| `ANCHOR_SEMANTIC` | set to `1` to enable semantic-fuzzy cache (requires `OPENAI_API_KEY` for embeddings) |
+| `ANCHOR_SEMANTIC_THRESHOLD` | cosine threshold for semantic hits, default `0.95` |
+| `OPENAI_EMBEDDINGS_URL` | override embeddings endpoint (default `https://api.openai.com/v1/embeddings`) |
 | `NO_COLOR` | drop ANSI codes from CLI output |
 
 ## roadmap
 
 | version | what |
 |---|---|
-| **v0.1** | exact-match cache, spend tracker (you are here) |
-| v0.2  | semantic-fuzzy cache (local embeddings), streaming-aware cache |
-| v0.3  | smart routing: cheap model for simple prompts, premium for hard |
+| v0.1  | exact-match cache, spend tracker |
+| **v0.2** | semantic-fuzzy cache via embeddings (you are here) |
+| v0.3  | streaming-aware cache, smart routing: cheap model for simple prompts, premium for hard |
 | v0.4  | MCP server: long-term memory tools for Claude Code / Cursor |
 | v0.5  | anti-compact: smart context window management for long sessions |
 | v1.0  | polished: brew formula, demo, launch |
