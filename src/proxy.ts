@@ -14,8 +14,9 @@ import { keyOf, store, tryHit, cacheStats } from "./cache";
 import { recordEvent } from "./spend";
 import { costUsd, type Tokens } from "./pricing";
 import { OpenAIEmbeddingBackend, type EmbeddingBackend } from "./embeddings";
-import { storeEmbedding } from "./embedding_store";
+import { storeEmbedding, bestSemanticMatch } from "./embedding_store";
 import { inputTextFor } from "./cache_serialize";
+import { db } from "./db";
 
 const ANTHROPIC_UPSTREAM = process.env.ANTHROPIC_UPSTREAM || "https://api.anthropic.com";
 const OPENAI_UPSTREAM = process.env.OPENAI_UPSTREAM || "https://api.openai.com";
@@ -25,6 +26,19 @@ const OPENAI_UPSTREAM = process.env.OPENAI_UPSTREAM || "https://api.openai.com";
 // lookup. Off by default in v0.2.0 so behaviour matches v0.1; flip to
 // ANCHOR_SEMANTIC=1 to opt in. The lookup path is added in a follow-up PR.
 const SEMANTIC_ENABLED = process.env.ANCHOR_SEMANTIC === "1";
+
+// Cosine similarity threshold for the semantic lookup on cache miss. A high
+// default keeps false-positive rate low: only near-duplicate prompts return a
+// cached response. Override with ANCHOR_SEMANTIC_THRESHOLD if you want to
+// trade recall for precision.
+const SEMANTIC_THRESHOLD = (() => {
+  const v = parseFloat(process.env.ANCHOR_SEMANTIC_THRESHOLD || "");
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.95;
+})();
+
+const lookupByKey = db.query(
+  "SELECT response, status, miss_cost, model, provider FROM cache WHERE key = ?",
+);
 
 function detectProvider(url: URL): "anthropic" | "openai" | null {
   if (url.pathname.startsWith("/v1/messages")) return "anthropic";
@@ -117,6 +131,39 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
     }
   }
 
+  // Semantic lookup on miss: embed the request's input text, scan stored
+  // embeddings for the closest match above SEMANTIC_THRESHOLD, and only
+  // accept it if the stored row was produced for the same provider+model.
+  // Cross-model reuse would mix output styles and is almost always wrong.
+  async function trySemanticHit(
+    body: any,
+    provider: "anthropic" | "openai",
+    model: string,
+  ): Promise<{ status: number; body: Buffer; missCost: number; score: number } | null> {
+    if (!embeddings) return null;
+    const text = inputTextFor(body);
+    if (!text) return null;
+    let vector: Float32Array;
+    try {
+      vector = await embeddings.embed(text);
+    } catch (e) {
+      log("semantic embed failed", (e as Error).message);
+      return null;
+    }
+    const match = bestSemanticMatch({
+      query: vector,
+      backendId: embeddings.id,
+      threshold: SEMANTIC_THRESHOLD,
+    });
+    if (!match) return null;
+    const row = lookupByKey.get(match.cacheKey) as
+      | { response: Buffer; status: number; miss_cost: number; model: string; provider: string }
+      | undefined;
+    if (!row) return null;
+    if (row.provider !== provider || row.model !== model) return null;
+    return { status: row.status, body: row.response, missCost: row.miss_cost ?? 0, score: match.score };
+  }
+
   const server = Bun.serve({
     port: opts.port,
     hostname: opts.host,
@@ -166,6 +213,27 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
             status: hit.status,
             headers: { "content-type": "application/json", "x-anchor-cache": "hit" },
           });
+        }
+
+        // Exact-match missed. Try a semantic lookup before paying for an
+        // upstream call. Skipped entirely when semantic indexing is off.
+        if (embeddings) {
+          const sem = await trySemanticHit(body, provider, model);
+          if (sem) {
+            let usage: any = {};
+            try { usage = JSON.parse(sem.body.toString("utf8"))?.usage || {}; } catch {}
+            const tokens = provider === "anthropic" ? tokensFromAnthropic(usage) : tokensFromOpenAI(usage);
+            recordEvent({ provider, model, source, tokens, cacheHit: true, savedUsd: sem.missCost });
+            log("HIT-SEM", provider, model, source, "score=" + sem.score.toFixed(4), "saved $" + sem.missCost.toFixed(6));
+            return new Response(sem.body, {
+              status: sem.status,
+              headers: {
+                "content-type": "application/json",
+                "x-anchor-cache": "semantic",
+                "x-anchor-semantic-score": sem.score.toFixed(4),
+              },
+            });
+          }
         }
       }
 
