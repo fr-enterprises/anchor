@@ -16,6 +16,7 @@ import { costUsd, type Tokens } from "./pricing";
 import { OpenAIEmbeddingBackend, type EmbeddingBackend } from "./embeddings";
 import { storeEmbedding, bestSemanticMatch } from "./embedding_store";
 import { inputTextFor } from "./cache_serialize";
+import { teeStream, parseStreamUsage, replayStream } from "./stream_capture";
 import { db } from "./db";
 
 const ANTHROPIC_UPSTREAM = process.env.ANTHROPIC_UPSTREAM || "https://api.anthropic.com";
@@ -195,45 +196,57 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
       const isStream = !!body.stream;
       const model = modelFromBody(body);
 
-      // Cache lookup.
-      if (!isStream) {
-        const k = keyOf({ provider, model, body });
-        const hit = tryHit(k);
-        if (hit) {
-          // Use the original miss cost stored alongside the cache entry. That
-          // way savings reflect the real money the original call cost, not
-          // a recomputation from the cached usage (which may not reflect the
-          // exact prompt re-tokenization).
+      // Cache lookup. The key includes the stream flag, so streaming and
+      // non-streaming variants of the same prompt are stored independently
+      // and we always serve them back in the format the client expected.
+      const k = keyOf({ provider, model, body });
+      const hit = tryHit(k);
+      if (hit) {
+        // For non-stream entries, the body is JSON; usage is in the JSON.
+        // For stream entries, the body is raw SSE bytes; usage was parsed
+        // at miss time and we do not re-derive it on hit (would require
+        // re-walking the SSE on every hit). Spend gets cacheHit=true with
+        // tokens reported on the original miss; we keep tokens=zero on
+        // stream hits so we don't double-count phantom tokens.
+        let tokens: Tokens = { input: 0, output: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 };
+        if (!hit.isStream) {
           let usage: any = {};
           try { usage = JSON.parse(hit.body.toString("utf8"))?.usage || {}; } catch {}
-          const tokens = provider === "anthropic" ? tokensFromAnthropic(usage) : tokensFromOpenAI(usage);
-          recordEvent({ provider, model, source, tokens, cacheHit: true, savedUsd: hit.missCost });
-          log("HIT ", provider, model, source, "saved $" + hit.missCost.toFixed(6));
-          return new Response(hit.body, {
+          tokens = provider === "anthropic" ? tokensFromAnthropic(usage) : tokensFromOpenAI(usage);
+        }
+        recordEvent({ provider, model, source, tokens, cacheHit: true, savedUsd: hit.missCost });
+        log(hit.isStream ? "HIT-STREAM" : "HIT", provider, model, source, "saved $" + hit.missCost.toFixed(6));
+        if (hit.isStream) {
+          return new Response(replayStream(hit.body), {
             status: hit.status,
-            headers: { "content-type": "application/json", "x-anchor-cache": "hit" },
+            headers: { "content-type": "text/event-stream", "x-anchor-cache": "hit" },
           });
         }
+        return new Response(hit.body, {
+          status: hit.status,
+          headers: { "content-type": "application/json", "x-anchor-cache": "hit" },
+        });
+      }
 
-        // Exact-match missed. Try a semantic lookup before paying for an
-        // upstream call. Skipped entirely when semantic indexing is off.
-        if (embeddings) {
-          const sem = await trySemanticHit(body, provider, model);
-          if (sem) {
-            let usage: any = {};
-            try { usage = JSON.parse(sem.body.toString("utf8"))?.usage || {}; } catch {}
-            const tokens = provider === "anthropic" ? tokensFromAnthropic(usage) : tokensFromOpenAI(usage);
-            recordEvent({ provider, model, source, tokens, cacheHit: true, savedUsd: sem.missCost });
-            log("HIT-SEM", provider, model, source, "score=" + sem.score.toFixed(4), "saved $" + sem.missCost.toFixed(6));
-            return new Response(sem.body, {
-              status: sem.status,
-              headers: {
-                "content-type": "application/json",
-                "x-anchor-cache": "semantic",
-                "x-anchor-semantic-score": sem.score.toFixed(4),
-              },
-            });
-          }
+      // Exact-match missed. Try a semantic lookup before paying for an
+      // upstream call. Only runs for non-streaming requests in this version;
+      // semantic replay over SSE is a future PR.
+      if (!isStream && embeddings) {
+        const sem = await trySemanticHit(body, provider, model);
+        if (sem) {
+          let usage: any = {};
+          try { usage = JSON.parse(sem.body.toString("utf8"))?.usage || {}; } catch {}
+          const tokens = provider === "anthropic" ? tokensFromAnthropic(usage) : tokensFromOpenAI(usage);
+          recordEvent({ provider, model, source, tokens, cacheHit: true, savedUsd: sem.missCost });
+          log("HIT-SEM", provider, model, source, "score=" + sem.score.toFixed(4), "saved $" + sem.missCost.toFixed(6));
+          return new Response(sem.body, {
+            status: sem.status,
+            headers: {
+              "content-type": "application/json",
+              "x-anchor-cache": "semantic",
+              "x-anchor-semantic-score": sem.score.toFixed(4),
+            },
+          });
         }
       }
 
@@ -247,10 +260,39 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
         body: reqBuf,
       });
 
-      // Streaming: stream-pipe back unchanged, no cache yet.
+      // Streaming: tee the upstream body so the client gets a normal SSE
+      // stream while we collect the bytes for the cache. Storage happens
+      // after the upstream finishes; the client does not wait on it.
       if (isStream) {
-        log("MISS-STREAM", provider, model, source);
-        return new Response(upstreamResp.body, {
+        if (!upstreamResp.body || !upstreamResp.ok) {
+          log("ERR-STREAM", provider, model, source, upstreamResp.status);
+          return new Response(upstreamResp.body, {
+            status: upstreamResp.status,
+            headers: upstreamResp.headers,
+          });
+        }
+        const { client, done } = teeStream(upstreamResp.body);
+        done.then((buf) => {
+          const tokens = parseStreamUsage(buf, provider);
+          const missCost = costUsd(tokens, model);
+          recordEvent({ provider, model, source, tokens, cacheHit: false, savedUsd: 0 });
+          log("MISS-STREAM", provider, model, source, "$" + missCost.toFixed(6));
+          store({
+            key: k,
+            provider,
+            model,
+            request: reqBuf,
+            response: buf,
+            status: upstreamResp.status,
+            missCost,
+            isStream: true,
+          });
+          if (embeddings) indexMiss(k, body);
+        }).catch((e) => log("stream capture failed", (e as Error).message));
+
+        // Forward upstream headers so content-type, anthropic-organization,
+        // etc. flow through unchanged.
+        return new Response(client, {
           status: upstreamResp.status,
           headers: upstreamResp.headers,
         });
@@ -269,7 +311,6 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
 
         // Store in cache with the cost of this miss so future hits can
         // accurately report savings.
-        const k = keyOf({ provider, model, body });
         store({
           key: k,
           provider,
