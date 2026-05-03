@@ -183,8 +183,8 @@ memory uses the same OpenAI embeddings backend as the cache, so one `OPENAI_API_
 |---|---|
 | v0.1  | exact-match cache, spend tracker |
 | v0.2  | semantic-fuzzy cache via embeddings |
-| **v0.3** | streaming-aware cache (you are here) |
-| v0.4  | MCP server: long-term memory tools for Claude Code / Cursor |
+| v0.3  | streaming-aware cache |
+| **v0.4** | MCP server: long-term memory for Claude Code / Cursor (you are here) |
 | v0.5  | smart routing: cheap model for simple prompts, premium for hard |
 | v0.6  | anti-compact: smart context window management for long sessions |
 | v1.0  | polished: brew formula, demo, launch |
