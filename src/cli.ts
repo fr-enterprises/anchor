@@ -16,7 +16,7 @@ import { cacheStats, clearCache } from "./cache";
 import { summary, totals } from "./spend";
 import { dbPath } from "./db";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const NOCOLOR = !!process.env.NO_COLOR || !process.stdout.isTTY;
 const C = (open: string) => (s: string) => (NOCOLOR ? s : `${open}${s}\x1b[0m`);
