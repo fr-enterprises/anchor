@@ -75,6 +75,21 @@ const SCHEMA = [
     saved_at    INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS cache_embeddings_backend ON cache_embeddings(backend_id)",
+
+  // v0.4: long-term memory store. Independent from the cache. The MCP
+  // server (anchor mcp) exposes recall/remember tools backed by this table
+  // so Claude Code and Cursor can persist notes across sessions.
+  `CREATE TABLE IF NOT EXISTS memory (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    text        TEXT NOT NULL,
+    tags        TEXT NOT NULL DEFAULT '[]',
+    backend_id  TEXT NOT NULL,
+    vector      BLOB NOT NULL,
+    created_at  INTEGER NOT NULL,
+    source      TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS memory_created_at ON memory(created_at)",
+  "CREATE INDEX IF NOT EXISTS memory_backend ON memory(backend_id)",
 ];
 
 for (const sql of SCHEMA) {

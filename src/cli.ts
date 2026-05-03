@@ -15,6 +15,7 @@ import { start } from "./proxy";
 import { cacheStats, clearCache } from "./cache";
 import { summary, totals } from "./spend";
 import { dbPath } from "./db";
+import { remember, recall, listRecent, forget, memoryCount } from "./memory";
 
 const VERSION = "0.3.0";
 
@@ -141,6 +142,74 @@ function cmdCache(args: string[]) {
   console.log("size:    " + (stats.bytes / 1024).toFixed(1) + " KB");
 }
 
+async function cmdRemember(args: string[]) {
+  const text = args.filter((a) => !a.startsWith("--")).join(" ").trim();
+  if (!text) {
+    console.error(red("usage: ") + "anchor remember \"note text\" [--tag work --tag api]");
+    process.exit(1);
+  }
+  const tags: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--tag" && args[i + 1]) tags.push(args[++i]!);
+  }
+  const source = flagValue(args, "--source") || "cli";
+  const entry = await remember({ text, tags, source });
+  console.log(green("✓") + " #" + entry.id + dim("  ") + entry.text);
+  if (tags.length) console.log(dim("  tags: " + tags.join(", ")));
+}
+
+async function cmdRecall(args: string[]) {
+  const k = Number(flagValue(args, "--k")) || 5;
+  const threshold = Number(flagValue(args, "--threshold"));
+  const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--k" && args[i - 1] !== "--threshold");
+  const query = positional.join(" ").trim();
+  if (!query) {
+    console.error(red("usage: ") + "anchor recall \"what was that thing about X\" [--k 5]");
+    process.exit(1);
+  }
+  const hits = await recall({ query, k, threshold: Number.isFinite(threshold) ? threshold : 0 });
+  if (hits.length === 0) {
+    console.log(dim("no matches"));
+    return;
+  }
+  for (const h of hits) {
+    console.log(cyan(h.score.toFixed(3)) + dim("  #" + h.id + "  ") + h.text);
+    if (h.tags.length) console.log(dim("       tags: " + h.tags.join(", ")));
+  }
+}
+
+function cmdMemory(args: string[]) {
+  const sub = args[0];
+  if (sub === "list" || sub === undefined) {
+    const limit = Number(flagValue(args.slice(1), "--limit")) || 20;
+    const rows = listRecent(limit);
+    if (rows.length === 0) {
+      console.log(dim("memory is empty"));
+      return;
+    }
+    console.log(dim("total: " + memoryCount() + " entries"));
+    for (const r of rows) {
+      const date = new Date(r.createdAt).toISOString().slice(0, 16).replace("T", " ");
+      console.log(dim(date) + "  #" + String(r.id).padEnd(4) + r.text);
+      if (r.tags.length) console.log(dim("                       tags: " + r.tags.join(", ")));
+    }
+    return;
+  }
+  if (sub === "forget") {
+    const id = Number(args[1]);
+    if (!Number.isFinite(id)) {
+      console.error(red("usage: ") + "anchor memory forget <id>");
+      process.exit(1);
+    }
+    const ok = forget(id);
+    console.log(ok ? green("✓") + " forgot #" + id : red("✕") + " no entry #" + id);
+    if (!ok) process.exit(1);
+    return;
+  }
+  console.error(red("unknown memory subcommand: ") + sub);
+  process.exit(1);
+}
+
 async function cmdHealth() {
   const port = Number(process.env.ANCHOR_PORT) || 7777;
   const host = process.env.ANCHOR_HOST || "127.0.0.1";
@@ -163,6 +232,10 @@ ${bold("Usage")}
   anchor stats [today|week|month|all] [--by-day] [--by-model] [--by-source] [--json]
   anchor cache         show cache size
   anchor cache clear   wipe the cache
+  anchor remember "note" [--tag work]    save a long-term memory
+  anchor recall "query" [--k 5]          semantic search over memory
+  anchor memory list [--limit 20]        list recent memories
+  anchor memory forget <id>              delete a memory
   anchor health        check if the proxy is running
   anchor version
 
@@ -186,6 +259,15 @@ try {
       break;
     case "cache":
       cmdCache(args);
+      break;
+    case "remember":
+      await cmdRemember(args);
+      break;
+    case "recall":
+      await cmdRecall(args);
+      break;
+    case "memory":
+      cmdMemory(args);
       break;
     case "health":
       await cmdHealth();
