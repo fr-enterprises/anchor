@@ -19,7 +19,7 @@ import { dbPath } from "./db";
 import { remember, recall, listRecent, forget, memoryCount } from "./memory";
 import { runMcp } from "./mcp";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const NOCOLOR = !!process.env.NO_COLOR || !process.stdout.isTTY;
 const C = (open: string) => (s: string) => (NOCOLOR ? s : `${open}${s}\x1b[0m`);
