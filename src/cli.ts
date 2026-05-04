@@ -14,6 +14,7 @@
 import { start } from "./proxy";
 import { cacheStats, clearCache } from "./cache";
 import { summary, totals } from "./spend";
+import { gatherShareData, renderShareHtml, uploadShare, setShareSecret, setShareUrl } from "./share";
 import { dbPath } from "./db";
 import { remember, recall, listRecent, forget, memoryCount } from "./memory";
 import { runMcp } from "./mcp";
@@ -80,8 +81,23 @@ async function cmdProxy(args: string[]) {
   });
 }
 
-function cmdStats(args: string[]) {
-  const since = sinceTs(flagValue(args, "--since") || args[0]);
+async function cmdStats(args: string[]) {
+  // Settings sub-flags handled before stats render.
+  const newSecret = flagValue(args, "--share-secret");
+  if (newSecret !== undefined) {
+    setShareSecret(newSecret);
+    console.log(green("✓") + " share secret saved (anchor.db settings)");
+    return;
+  }
+  const newShareUrl = flagValue(args, "--share-url");
+  if (newShareUrl !== undefined) {
+    setShareUrl(newShareUrl);
+    console.log(green("✓") + " share url set: " + newShareUrl);
+    return;
+  }
+
+  const rangeArg = flagValue(args, "--since") || args.find((a) => !a.startsWith("-")) || "today";
+  const since = sinceTs(rangeArg);
 
   const t = totals({ sinceTs: since });
   const totalReq = t.hits + t.misses;
@@ -129,6 +145,25 @@ function cmdStats(args: string[]) {
       hitRate,
       cache: cacheStats(),
     }, null, 2));
+  }
+
+  if (args.includes("--share")) {
+    if (totalReq === 0) {
+      console.log(dim("nothing to share yet (no requests in range)"));
+      return;
+    }
+    console.log(dim("uploading share..."));
+    try {
+      const data = gatherShareData(since, rangeArg);
+      const html = renderShareHtml(data);
+      const { url } = await uploadShare(html);
+      console.log("");
+      console.log(bold("shared:") + " " + green(url));
+      console.log(dim("public read-only dashboard. expires in 90 days."));
+    } catch (e) {
+      console.error(red("share failed: ") + (e as Error).message);
+      process.exit(1);
+    }
   }
 }
 
@@ -257,7 +292,7 @@ try {
       await cmdProxy(args);
       break;
     case "stats":
-      cmdStats(args);
+      await cmdStats(args);
       break;
     case "cache":
       cmdCache(args);
