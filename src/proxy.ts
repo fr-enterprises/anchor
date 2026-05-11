@@ -79,6 +79,20 @@ function modelFromBody(body: any): string {
   return body?.model || "unknown";
 }
 
+// Bun's fetch transparently decompresses gzip/br/deflate bodies — but it
+// leaves the upstream's content-encoding/content-length headers intact on
+// the Response object. If we forward those headers verbatim, the client
+// thinks the body is still compressed and crashes with ZlibError. Always
+// drop encoding/length headers when relaying an upstream response.
+function relayHeaders(src: Headers, extra?: Record<string, string>): Headers {
+  const h = new Headers(src);
+  h.delete("content-encoding");
+  h.delete("content-length");
+  h.delete("transfer-encoding");
+  if (extra) for (const [k, v] of Object.entries(extra)) h.set(k, v);
+  return h;
+}
+
 function sourceFromHeaders(req: Request): string {
   return (
     req.headers.get("x-anchor-source") ||
@@ -268,7 +282,7 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
           log("ERR-STREAM", provider, model, source, upstreamResp.status);
           return new Response(upstreamResp.body, {
             status: upstreamResp.status,
-            headers: upstreamResp.headers,
+            headers: relayHeaders(upstreamResp.headers),
           });
         }
         const { client, done } = teeStream(upstreamResp.body);
@@ -291,10 +305,11 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
         }).catch((e) => log("stream capture failed", (e as Error).message));
 
         // Forward upstream headers so content-type, anthropic-organization,
-        // etc. flow through unchanged.
+        // etc. flow through unchanged. Strip encoding/length — Bun already
+        // decompressed and the bytes we're piping are plain SSE.
         return new Response(client, {
           status: upstreamResp.status,
-          headers: upstreamResp.headers,
+          headers: relayHeaders(upstreamResp.headers),
         });
       }
 
@@ -331,7 +346,7 @@ export function start(opts: { port: number; host: string; verbose?: boolean }) {
 
       return new Response(respBuf, {
         status: upstreamResp.status,
-        headers: upstreamResp.headers,
+        headers: relayHeaders(upstreamResp.headers),
       });
     },
   });
